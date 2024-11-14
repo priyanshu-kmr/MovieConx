@@ -38,7 +38,7 @@ const AccountPopup = ({ onClose }) => {
   };
 
   const handleSelectGenres = () => {
-    navigate('/preferences', { state: { userId: user.id } });
+    navigate('/preferences');
   };
 
   return (

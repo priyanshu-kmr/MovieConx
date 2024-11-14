@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
+import { BrowserRouter as Router, Navigate, Route, Routes } from 'react-router-dom';
 import { UserProvider } from './components/UserContext/UserContext';
 import MainPage from './components/MainPage/MainPage';
 import LoginPage from './components/Login/Login';
@@ -12,6 +12,7 @@ const App = () => (
   <UserProvider>
     <Router>
       <Routes>
+        <Route path="/" element={<Navigate to="/main" replace />} />
         <Route path="/main" element={<MainPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/signup" element={<SignupPage />} />

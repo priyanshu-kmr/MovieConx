@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { UserContext } from '../UserContext/UserContext';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import api from '../../api.js';
 import '../../css/Settings.css';
 import DeleteAccountPopup from './DeleteAccount';
 
@@ -28,7 +28,7 @@ const Settings = () => {
 
         const fetchUserData = async () => {
             try {
-                const response = await axios.get(`http://localhost:5000/settings/${user.id}`);
+                const response = await api.get('/settings');
                 setFormData({
                     username: response.data.username,
                     email: response.data.email
@@ -58,7 +58,7 @@ const Settings = () => {
     const handleSubmit = async (e) => {
         e.preventDefault();
         try {
-            const response = await axios.put(`http://localhost:5000/settings/update/${user.id}`, formData);
+            const response = await api.put('/settings', formData);
             setUser(prev => ({
                 ...prev,
                 username: response.data.user.username
@@ -72,9 +72,9 @@ const Settings = () => {
         }
     };
 
-    const handleDeleteAccount = async () => {
+    const handleDeleteAccount = async (password) => {
         try {
-            const response = await axios.delete(`http://localhost:5000/settings/delete/${user.id}`);
+            const response = await api.delete('/settings', { data: { password } });
             if (response.data.message === 'Account deleted successfully') {
                 setUser(null);
                 navigate('/login');
@@ -130,7 +130,6 @@ const Settings = () => {
                 </button>
                 {showDeletePopup && (
                     <DeleteAccountPopup
-                        userId={user.id}
                         onClose={() => setShowDeletePopup(false)}
                         onDelete={handleDeleteAccount}
                     />

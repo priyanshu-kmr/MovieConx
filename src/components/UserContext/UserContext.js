@@ -5,8 +5,13 @@ const UserContext = createContext();
 
 const UserProvider = ({ children }) => {
   const [user, setUser] = useState(() => {
-    const savedUser = localStorage.getItem('user');
-    return savedUser ? JSON.parse(savedUser) : null;
+    try {
+      const savedUser = JSON.parse(localStorage.getItem('user'));
+      // Sessions saved before token auth have no token and must log in again
+      return savedUser && savedUser.token ? savedUser : null;
+    } catch (error) {
+      return null;
+    }
   });
 
   useEffect(() => {

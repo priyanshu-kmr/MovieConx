@@ -1,30 +1,25 @@
 // components/Preferences/Preferences.js
 import React, { useState, useContext, useEffect } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
 import { UserContext } from '../UserContext/UserContext.js';
+import api from '../../api.js';
 import '../../css/Preferences.css';
 
+// Must match the genre names in AI/movies.json
 const genresList = [
-  'Action', 'Adventure', 'Animation', "Children's", 'Comedy', 'Crime', 'Documentary', 'Drama', 'Fantasy', 'Film-Noir', 'Horror', 'Musical', 'Mystery', 'Romance', 'Sci-Fi', 'Thriller', 'War', 'Western',
+  'Action', 'Adventure', 'Animation', 'Children', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Fantasy', 'Film-Noir', 'Horror', 'Musical', 'Mystery', 'Romance', 'Sci-Fi', 'Thriller', 'War', 'Western',
 ];
 
 const Preferences = () => {
-  const [selectedGenres, setSelectedGenres] = useState([]);
-  const location = useLocation();
   const navigate = useNavigate();
   const { user, setUser } = useContext(UserContext);
-  const [userId, setUserId] = useState(null);
+  const [selectedGenres, setSelectedGenres] = useState(user?.genres || []);
 
   useEffect(() => {
-    if (location.state && location.state.userId) {
-      setUserId(location.state.userId);
-    } else if (user && user.id) {
-      setUserId(user.id);
-    } else {
-      console.error('User ID not found');
+    if (!user) {
+      navigate('/login');
     }
-  }, [location.state, user]);
+  }, [user, navigate]);
 
   const handleGenreClick = (genre) => {
     setSelectedGenres((prevSelected) => {
@@ -38,8 +33,7 @@ const Preferences = () => {
   const handleContinue = async () => {
     if (selectedGenres.length >= 3) {
       try {
-        await axios.post('http://localhost:5000/preferences', { userId, genres: selectedGenres });
-        console.log("Selected genres:", selectedGenres);
+        await api.post('/preferences', { genres: selectedGenres });
         setUser({ ...user, genres: selectedGenres });
         navigate('/main'); // Replace with your desired route
       } catch (error) {

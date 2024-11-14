@@ -3,16 +3,30 @@
 const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
+const { signToken } = require('../middleware/auth');
+const { hashPassword, isNonEmptyString } = require('../utils/password');
+
+const MIN_PASSWORD_LENGTH = 8;
 
 // Signup route
 router.post('/', async (req, res) => {
   const { username, email, password } = req.body;
 
+  const errors = {};
+  if (!isNonEmptyString(username)) errors.username = 'Please enter the Username';
+  if (!isNonEmptyString(email)) errors.email = 'Please enter the Email';
+  if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
+    errors.password = `Password must be at least ${MIN_PASSWORD_LENGTH} characters`;
+  }
+  if (Object.keys(errors).length) {
+    return res.status(400).json(errors);
+  }
+
   try {
     // Check if the username already exists
-    const userByUsername = await User.findOne({ username });
+    const userByUsername = await User.findOne({ username: username.trim() });
     // Check if the email already exists
-    const userByEmail = await User.findOne({ email });
+    const userByEmail = await User.findOne({ email: email.trim().toLowerCase() });
 
     if (userByUsername || userByEmail) {
       return res.status(400).json({
@@ -21,32 +35,17 @@ router.post('/', async (req, res) => {
       });
     }
 
-
     // Create a new user
-    const newUser = new User({ username, email, password: password });
+    const newUser = new User({ username, email, password: await hashPassword(password) });
     await newUser.save();
 
-    // Include the user ID in the response
-    res.status(201).json({ message: 'User created successfully', user: { _id: newUser._id } });
+    res.status(201).json({
+      message: 'User created successfully',
+      token: signToken(newUser),
+      user: { id: newUser._id, username: newUser.username, genres: newUser.genres }
+    });
   } catch (error) {
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-router.post('/preferences', async (req, res) => {
-  const { userId, genres } = req.body;
-
-  try {
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    user.genres = genres;
-    await user.save();
-
-    res.status(200).json({ message: 'Preferences saved successfully' });
-  } catch (error) {
+    console.error('Error during signup:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });

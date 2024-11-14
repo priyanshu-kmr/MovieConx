@@ -1,9 +1,9 @@
 // components/Login/Login.js
 import React, { useState, useContext } from 'react';
-import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import '../../css/Login.css';
 import { UserContext } from '../UserContext/UserContext.js';
+import api from '../../api.js';
 
 const LoginPage = () => {
   const [formData, setFormData] = useState({
@@ -38,9 +38,9 @@ const LoginPage = () => {
   
     if (Object.keys(newErrors).length === 0) {
       try {
-        const response = await axios.post('http://localhost:5000/login', formData);
-        const { userId, username, genres } = response.data;
-        setUser({ id: userId, username, genres });
+        const response = await api.post('/login', formData);
+        const { token, user } = response.data;
+        setUser({ ...user, token });
         navigate('/main');
       } catch (error) {
         if (error.response && error.response.data) {

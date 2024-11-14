@@ -1,8 +1,8 @@
 // components/Signup/Signup.js
 import React, { useState, useContext } from 'react';
-import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { UserContext } from '../UserContext/UserContext.js';
+import api from '../../api.js';
 import '../../css/Signup.css';
 
 const SignupPage = () => {
@@ -43,10 +43,10 @@ const SignupPage = () => {
 
     if (Object.keys(newErrors).length === 0) {
       try {
-        const response = await axios.post('http://localhost:5000/signup', formData);
-        console.log('User created:', response.data);
-        setUser({ id: response.data.user._id, username: formData.username, genres: [] });
-        navigate('/preferences', { state: { userId: response.data.user._id } });
+        const response = await api.post('/signup', formData);
+        const { token, user } = response.data;
+        setUser({ ...user, token });
+        navigate('/preferences');
       } catch (error) {
         if (error.response && error.response.data) {
           setErrors(error.response.data);

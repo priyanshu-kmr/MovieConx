@@ -1,46 +1,56 @@
-import google.generativeai as genai
 import json
 import os
+from functools import lru_cache
 
-# Set your API key
-genai.configure(api_key='API_KEY')
-model = genai.GenerativeModel("gemini-1.5-flash")
+from google import genai
+from google.genai import types
+
+from recommender import MOVIES
+
+# Gemini fills in description/directors/cast on the movie page.
+# Without GEMINI_API_KEY the endpoint returns 503 and the page just skips that section.
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
+
+client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+
+
+@lru_cache(maxsize=1024)
+def _ask_gemini(title):
+    prompt = f"""
+    Provide the following details for the movie "{title}". The description should not be more than 100 words.
+    {{
+        "title": "{title}",
+        "description": "<desc>",
+        "directors": ["<director1>", "<director2>", ..],
+        "actors": ["<actor1>", "<actor2>", "<actor3>", ..]
+    }}
+    """
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(response_mime_type='application/json'),
+    )
+    return json.loads(response.text)
+
+
 def get_movie_details(movie_id):
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    file_path = os.path.join(base_dir, 'movies.json')
-    
-    with open(file_path, 'r') as file:
-        movies = json.load(file)
-        movie = movies.get(movie_id)
-        
-        if not movie:
-            return {"error": "Movie not found"}
-        
-        title = movie['title']
-        
-        prompt = f"""
-        Provide the following details for the movie "{title}" The description should not be more than 100 words". Just fill the fields without code fences.
-        {{
-            "title": "{title}",
-            "description": "<desc>",
-            "directors": ["<director1>", "<director2>", ..],
-            "actors": ["<actor1>", "<actor2>", "<actor3>", ..]
-        }}
-        """
-        
-        response = model.generate_content(prompt)
-        response_text = response.text.strip()
+    """Returns (body, http_status)."""
+    movie = MOVIES.get(movie_id)
+    if not movie:
+        return {"error": "Movie not found"}, 404
 
-        if response_text.startswith('```json') and response_text.endswith('```'):
-            response_text = response_text[7:-3].strip()
-        elif response_text.startswith('```') and response_text.endswith('```'):
-            response_text = response_text[3:-3].strip()
+    if client is None:
+        return {"error": "Movie details are disabled: GEMINI_API_KEY is not set"}, 503
 
-        try:
-            response_json = json.loads(response_text)
-            return response_json
-        except json.JSONDecodeError:
-            return {"Error": "Could not parse response as JSON"}
+    try:
+        details = _ask_gemini(movie['title'])
+    except json.JSONDecodeError:
+        return {"error": "Could not parse response as JSON"}, 502
+    except Exception as e:
+        print(f"Gemini request failed for {movie_id}: {e!r}")
+        return {"error": "Movie details are unavailable"}, 502
 
-
-
+    details.setdefault('directors', [])
+    details.setdefault('actors', [])
+    return details, 200
