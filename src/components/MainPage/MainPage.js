@@ -1,12 +1,16 @@
 import React, { useContext, useState, useEffect } from 'react';
 import '../../css/MainPage.css';
 import MovieList from '../MainPage/MovieList.js';
+import SearchHistory from '../SearchHistory/SearchHistory.js';
 import { UserContext } from '../UserContext/UserContext.js';
 import IconButton from '@mui/material/IconButton';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import SearchIcon from '@mui/icons-material/Search';
 import AccountPopup from '../MainPage/AccountPopup.js';
 import { useNavigate, useLocation } from 'react-router-dom';
+import api, { AI_URL, recordSearch } from '../../api.js';
+
+const toArray = (movies) => Object.keys(movies).map(id => ({ id, ...movies[id] }));
 
 const MainPage = () => {
   const navigator = useNavigate();
@@ -14,58 +18,86 @@ const MainPage = () => {
   const { user } = useContext(UserContext);
   const [isPopupVisible, setPopupVisible] = useState(false);
   const [recommendedMovies, setRecommendedMovies] = useState([]);
+  const [historyMovies, setHistoryMovies] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [activeQuery, setActiveQuery] = useState('');
   const [offset, setOffset] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
 
+  // The URL (?query=...) is the source of truth for what is shown.
   useEffect(() => {
     if (!user) {
       navigator('/login');
     } else {
       const queryParams = new URLSearchParams(location.search);
-      const query = queryParams.get('query') || '';
+      const query = (queryParams.get('query') || '').trim();
       setSearchQuery(query);
+      setActiveQuery(query);
       if (query) {
-        handleSearch(query);
+        runSearch(query);
       } else {
         fetchMovies(0, true); // Fetch movies with reset
+        fetchHistoryRecommendations();
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, location.search]);
 
   const fetchMovies = async (newOffset = 0, reset = false) => {
     setIsLoading(true);
-    const userGenres = user.genres;
-    const response = await fetch(`http://localhost:3001/filter?offset=${newOffset}&limit=14`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ genre: userGenres })
-    });
-    const movies = await response.json();
-    console.log('Fetched Movies:', movies);
+    try {
+      const response = await fetch(`${AI_URL}/filter?offset=${newOffset}&limit=14`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ genre: user.genres })
+      });
+      const moviesArray = toArray(await response.json());
 
-    const moviesArray = Object.keys(movies).map(id => ({ id, ...movies[id] }));
-
-    setRecommendedMovies(prevMovies => reset ? moviesArray : [...prevMovies, ...moviesArray]);
-    setOffset(newOffset + 14);
-    setIsLoading(false);
+      setRecommendedMovies(prevMovies => reset ? moviesArray : [...prevMovies, ...moviesArray]);
+      setOffset(newOffset + 14);
+    } catch (error) {
+      console.error('Error fetching movies:', error);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handleSearch = async (query = searchQuery) => {
+  const fetchHistoryRecommendations = async () => {
+    try {
+      const response = await api.get('/search-history/recommendations');
+      setHistoryMovies(toArray(response.data));
+    } catch (error) {
+      console.error('Error fetching search history recommendations:', error);
+      setHistoryMovies([]);
+    }
+  };
+
+  const searchUrl = (query, from) =>
+    `${AI_URL}/search?query=${encodeURIComponent(query)}&offset=${from}&limit=14`;
+
+  const runSearch = async (query) => {
     setIsLoading(true);
-    setOffset(0);
-    navigator(`?query=${query}&offset=0&limit=14`);
-    const response = await fetch(`http://localhost:3001/search?query=${query}&offset=0&limit=14`);
-    const searchResults = await response.json();
+    try {
+      const response = await fetch(searchUrl(query, 0));
+      setRecommendedMovies(toArray(await response.json()));
+      setOffset(14);
+    } catch (error) {
+      console.error('Error searching movies:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-
-    const searchResultsArray = Object.keys(searchResults).map(id => ({ id, ...searchResults[id] }));
-
-    setRecommendedMovies(searchResultsArray);
-    setOffset(14);
-    setIsLoading(false);
+  const handleSearch = () => {
+    const query = searchQuery.trim();
+    if (!query) {
+      navigator('/main');
+      return;
+    }
+    recordSearch(query);
+    navigator(`/main?query=${encodeURIComponent(query)}`);
   };
 
   const handleInputChange = (event) => {
@@ -83,17 +115,16 @@ const MainPage = () => {
   };
 
   const loadMoreMovies = async () => {
+    if (!activeQuery) {
+      await fetchMovies(offset);
+      return;
+    }
+
     setIsLoading(true);
     try {
-      if (searchQuery.trim()) {
-        const response = await fetch(`http://localhost:3001/search?query=${searchQuery}&offset=${offset}&limit=14`);
-        const searchResults = await response.json();
-        const searchResultsArray = Object.keys(searchResults).map(id => ({ id, ...searchResults[id] }));
-        console.log('Search Results Response:', searchResults);
-        setRecommendedMovies(prevMovies => [...prevMovies, ...searchResultsArray]);
-      } else {
-        await fetchMovies(offset);
-      }
+      const response = await fetch(searchUrl(activeQuery, offset));
+      const searchResultsArray = toArray(await response.json());
+      setRecommendedMovies(prevMovies => [...prevMovies, ...searchResultsArray]);
       setOffset(prev => prev + 14);
     } catch (error) {
       console.error('Error loading more movies:', error);
@@ -106,9 +137,9 @@ const MainPage = () => {
     <div>
       <header className="header">
         <div>
-          <input 
-            type="text" 
-            placeholder="Search..." 
+          <input
+            type="text"
+            placeholder="Search..."
             value={searchQuery}
             onChange={handleInputChange}
             onKeyPress={handleKeyPress}
@@ -121,7 +152,10 @@ const MainPage = () => {
           <AccountCircleIcon />
         </IconButton>
       </header>
-      <h2>Recommended Movies</h2>
+      {!activeQuery && (
+        <SearchHistory movies={historyMovies} title="Based on your recent searches" />
+      )}
+      <h2>{activeQuery ? `Results for "${activeQuery}"` : 'Recommended Movies'}</h2>
 
       <MovieList movies={recommendedMovies} />
       {isPopupVisible && <AccountPopup onClose={togglePopup} />}

@@ -1,9 +1,9 @@
 // components/Settings/DeleteAccountPopup.js
 import React, { useState } from 'react';
-import axios from 'axios';
+import api from '../../api.js';
 import '../../css/DeleteAccount.css';
 
-const DeleteAccountPopup = ({ onClose, userId, onDelete }) => {
+const DeleteAccountPopup = ({ onClose, onDelete }) => {
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [isVerified, setIsVerified] = useState(false);
@@ -12,9 +12,7 @@ const DeleteAccountPopup = ({ onClose, userId, onDelete }) => {
     const handleVerify = async () => {
         setIsLoading(true);
         try {
-            const response = await axios.post(`http://localhost:5000/settings/verify-password/${userId}`, {
-                password
-            });
+            const response = await api.post('/settings/verify-password', { password });
             if (response.data.verified) {
                 setIsVerified(true);
                 setError('');
@@ -28,7 +26,7 @@ const DeleteAccountPopup = ({ onClose, userId, onDelete }) => {
 
     const handleDelete = async () => {
         setIsLoading(true);
-        await onDelete();
+        await onDelete(password);
         setIsLoading(false);
     };
 

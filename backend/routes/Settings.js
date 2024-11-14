@@ -2,10 +2,15 @@
 const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
+const { requireAuth } = require('../middleware/auth');
+const { verifyPassword, isNonEmptyString } = require('../utils/password');
 
-router.get('/:userId', async (req, res) => {
+// Every settings route acts on the logged-in user only.
+router.use(requireAuth);
+
+router.get('/', async (req, res) => {
     try {
-        const user = await User.findById(req.params.userId);
+        const user = await User.findById(req.userId);
         if (!user) return res.status(404).json({ error: 'User not found' });
         res.json({ username: user.username, email: user.email });
     } catch (error) {
@@ -13,18 +18,23 @@ router.get('/:userId', async (req, res) => {
     }
 });
 
-router.put('/update/:userId', async (req, res) => {
+router.put('/', async (req, res) => {
     const { username, email } = req.body;
-    const userId = req.params.userId;
+    const userId = req.userId;
+
+    const errors = {};
+    if (!isNonEmptyString(username)) errors.username = 'Please enter the Username';
+    if (!isNonEmptyString(email)) errors.email = 'Please enter the Email';
+    if (Object.keys(errors).length) return res.status(400).json(errors);
 
     try {
         // Check if username or email already exists
-        const existingUsername = await User.findOne({ username, _id: { $ne: userId } });
+        const existingUsername = await User.findOne({ username: username.trim(), _id: { $ne: userId } });
         if (existingUsername) {
             return res.status(400).json({ username: 'Username already taken' });
         }
 
-        const existingEmail = await User.findOne({ email, _id: { $ne: userId } });
+        const existingEmail = await User.findOne({ email: email.trim().toLowerCase(), _id: { $ne: userId } });
         if (existingEmail) {
             return res.status(400).json({ email: 'Email already linked to another account' });
         }
@@ -33,19 +43,22 @@ router.put('/update/:userId', async (req, res) => {
         const updatedUser = await User.findByIdAndUpdate(
             userId,
             { username, email },
-            { new: true }
+            { new: true, runValidators: true }
         );
+        if (!updatedUser) return res.status(404).json({ error: 'User not found' });
 
-        res.json({ user: updatedUser });
+        res.json({ user: { id: updatedUser._id, username: updatedUser.username, email: updatedUser.email } });
     } catch (error) {
         res.status(500).json({ error: 'Server error' });
     }
 });
 
-router.post('/verify-password/:userId', async (req, res) => {
+router.post('/verify-password', async (req, res) => {
     try {
-        const user = await User.findById(req.params.userId);
-        if (user.password === req.body.password) {
+        const user = await User.findById(req.userId);
+        if (!user) return res.status(404).json({ error: 'User not found' });
+
+        if (typeof req.body.password === 'string' && await verifyPassword(user, req.body.password)) {
             res.json({ verified: true });
         } else {
             res.status(400).json({ error: 'Incorrect password' });
@@ -55,9 +68,17 @@ router.post('/verify-password/:userId', async (req, res) => {
     }
 });
 
-router.delete('/delete/:userId', async (req, res) => {
+// Deleting needs the password again, not just a valid token.
+router.delete('/', async (req, res) => {
     try {
-        await User.findByIdAndDelete(req.params.userId);
+        const user = await User.findById(req.userId);
+        if (!user) return res.status(404).json({ error: 'User not found' });
+
+        if (typeof req.body.password !== 'string' || !(await verifyPassword(user, req.body.password))) {
+            return res.status(400).json({ error: 'Incorrect password' });
+        }
+
+        await User.findByIdAndDelete(req.userId);
         res.json({ message: 'Account deleted successfully' });
     } catch (error) {
         res.status(500).json({ error: 'Server error' });

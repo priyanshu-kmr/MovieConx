@@ -1,92 +1,35 @@
-import json
 import os
+
+from dotenv import load_dotenv
+
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'))
+
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from video_scrapper import get_video
-from recommender import model, cosine_similarity
-import pickle
 from LLM import get_movie_details
-from recommender import recommend_movies
+from recommender import MOVIES, recommend_movies, search_movies, recommend_from_queries
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins=os.environ.get('CLIENT_ORIGIN', 'http://localhost:3000').split(','))
 
-def filter_movies_by_genre(movies, genres, offset=0, limit=14):
+TRAILERS_ENABLED = os.environ.get('ENABLE_TRAILERS', 'false').lower() == 'true'
 
-    recommended_movies = recommend_movies(genres)
-    filtered_movies = {}
-    count = 0
-    for movie_id, title, similarity in recommended_movies:
-        if movie_id in movies:
-            if count >= offset and count < offset + limit:
-                filtered_movies[movie_id] = movies[movie_id]
-            count += 1
-            if count >= offset + limit:
-                break
-    return filtered_movies
 
-def get_search_results(query, embeddings, movies, is_title_search=True, similarity_threshold=0.5):
-    """Helper to get search results with confidence scores"""
-    results = []
-    query_embedding = model.encode(query.lower())
-    
-    if is_title_search:
-        for movie_id, embedding in embeddings.items():
-            similarity = cosine_similarity(query_embedding, embedding)
-            if similarity >= similarity_threshold:
-                results.append((movie_id, movies[movie_id], similarity * 1.2))
-    else:
-        for movie_id, data in embeddings.items():
-            similarity = cosine_similarity(query_embedding, data['embedding'])
-            if similarity >= similarity_threshold:
-                results.append((movie_id, movies[movie_id], similarity))
-                
-    return results
+def page(movie_ids, offset=0, limit=14):
+    """Slice of the given ids as the {movie_id: movie} object the client expects."""
+    return {movie_id: MOVIES[movie_id] for movie_id in movie_ids[offset:offset + limit]}
 
-def search_movies_by_title(movies, query, offset=0, limit=14, similarity_threshold=0.5):
-    """Search using both embeddings with improved confidence scoring"""
-    try:
-        with open('ai/title_embeddings.pkl', 'rb') as f:
-            title_embeddings = pickle.load(f)
-        with open('ai/movie_combined_embeddings.pkl', 'rb') as f:
-            combined_embeddings = pickle.load(f)
 
-        query_embedding = model.encode(query.lower())
-        matched_movies = []
-        query_words = set(query.lower().split())
-        
-        # Title embeddings search
-        for movie_id, embedding in title_embeddings.items():
-            similarity = cosine_similarity(query_embedding, embedding)
-            if similarity >= similarity_threshold:
-                movie = movies[movie_id]
-                title_words = set(movie['title'].lower().split())
-                word_overlap = len(query_words & title_words) / len(query_words)
-                adjusted_similarity = similarity * (1 + word_overlap)
-                matched_movies.append((movie_id, movie, adjusted_similarity))
-        
-        # Combined embeddings search
-        for movie_id, data in combined_embeddings.items():
-            similarity = cosine_similarity(query_embedding, data['embedding'])
-            if similarity >= similarity_threshold:
-                if movie_id not in [m[0] for m in matched_movies]:  # Avoid duplicates
-                    movie = movies[movie_id]
-                    matched_movies.append((movie_id, movie, similarity))
-                    print(movie, similarity)
-        
-        # Sort by confidence score
-        matched_movies.sort(key=lambda x: x[2], reverse=True)
-        
-        # Apply offset and limit
-        results = {}
-        for movie_id, movie, _ in matched_movies[offset:offset + limit]:
-            results[movie_id] = movie
-            
-        return results
+def filter_movies_by_genre(genres, offset=0, limit=14):
+    return page(recommend_movies(genres), offset, limit)
 
-    except Exception as e:
-        print(f"Search error: {e}")
-        return {}
+
+def paging_args():
+    offset = max(int(request.args.get('offset', 0)), 0)
+    limit = min(max(int(request.args.get('limit', 14)), 1), 100)
+    return offset, limit
+
 
 @app.route('/')
 def yes():
@@ -94,89 +37,65 @@ def yes():
 
 @app.route('/stats')
 def stats():
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    file_path = os.path.join(base_dir, 'movies.json')
-    with open(file_path, 'r') as file:
-        movies = json.load(file)
-        return jsonify(movies)
+    return jsonify(MOVIES)
 
 @app.route('/filter', methods=['POST'])
 def filter_movies():
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     genres = data.get('genre', [])
-    offset = int(request.args.get('offset', 0))
-    limit = int(request.args.get('limit', 14))
+    offset, limit = paging_args()
 
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    file_path = os.path.join(base_dir, 'movies.json')
-    with open(file_path, 'r') as file:
-        movies = json.load(file)
-
-    filtered_movies = filter_movies_by_genre(movies, genres, offset, limit)
-
-    return jsonify(filtered_movies)
+    return jsonify(filter_movies_by_genre(genres, offset, limit))
 
 @app.route('/search', methods=['GET'])
-def search_movies():
-    query = request.args.get('query', '')
-    offset = int(request.args.get('offset', 0))
-    limit = int(request.args.get('limit', 14))
-    
+def search():
+    query = request.args.get('query', '').strip()
+    offset, limit = paging_args()
+
     if not query:
         return jsonify({})
-        
-    with open('ai/movies.json') as f:
-        movies = json.load(f)
-        
-    results = search_movies_by_title(movies, query, offset, limit)
-    return jsonify(results)
+
+    return jsonify(page(search_movies(query), offset, limit))
+
+@app.route('/history-recommendations', methods=['POST'])
+def history_recommendations():
+    data = request.get_json(silent=True) or {}
+    queries = [q for q in data.get('queries', []) if isinstance(q, str) and q.strip()]
+    limit = min(int(data.get('limit', 14)), 50)
+
+    if not queries:
+        return jsonify({})
+
+    return jsonify(page(recommend_from_queries(queries, limit), 0, limit))
 
 @app.route('/movie/<movie_id>', methods=['GET'])
 def get_movie(movie_id):
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    file_path = os.path.join(base_dir, 'movies.json')
-    with open(file_path, 'r') as file:
-        movies = json.load(file)
-        movie = movies.get(movie_id)
-        if movie:
-            try:
-                imdb_id = str(movie['imdbId'])
-                print(f'imdb_id: {imdb_id}')
-                video_link = get_video(imdb_id)
-                movie['video_link'] = video_link
-                print(movie['video_link'])
-            except Exception as e:
-                print(f"Error getting video: API down")
-                movie['video_link'] = None
-            return jsonify(movie)
-        else:
-            return jsonify({"error": "Movie not found"}), 404
+    if movie_id not in MOVIES:
+        return jsonify({"error": "Movie not found"}), 404
+
+    movie = dict(MOVIES[movie_id])
+    movie['video_link'] = None
+    if TRAILERS_ENABLED:
+        try:
+            movie['video_link'] = get_video(str(movie['imdbId']))
+        except Exception as e:
+            print(f"Error getting video for {movie_id}: {e!r}")
+    return jsonify(movie)
 
 @app.route('/movie_details/<movie_id>',methods=['GET'])
 def movie_details(movie_id):
-    movie_details = get_movie_details(movie_id)
-
-    return movie_details
+    details, status = get_movie_details(movie_id)
+    return jsonify(details), status
 
 @app.route('/movie-recommendations/<movie_id>')
 def get_movie_recommendations(movie_id):
-    with open('ai/movies.json') as f:
-        movies = json.load(f)
-        
-    # Get current movie's genres
-    current_movie = movies.get(movie_id)
+    current_movie = MOVIES.get(movie_id)
     if not current_movie:
         return jsonify({"error": "Movie not found"}), 404
-        
-    genres = current_movie.get('genres', [])
-    
-    # Get recommendations using existing filter function
-    recommendations = filter_movies_by_genre(movies, genres, limit=7)
-    
-    # Remove the current movie from recommendations if present
-    recommendations.pop(movie_id, None)
-    
-    return jsonify(recommendations)
+
+    # Same genre-based ranking as the main page, minus the movie itself
+    ranked = [m for m in recommend_movies(current_movie.get('genres', [])) if m != movie_id]
+    return jsonify(page(ranked, 0, 7))
 
 if __name__ == '__main__':
-    app.run(port=3001)
+    app.run(port=int(os.environ.get('AI_PORT', 3001)))

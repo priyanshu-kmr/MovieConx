@@ -8,6 +8,7 @@ import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import SearchIcon from '@mui/icons-material/Search';
 import AccountPopup from '../MainPage/AccountPopup';
 import { UserContext } from '../UserContext/UserContext';
+import { AI_URL, recordSearch } from '../../api.js';
 
 const MoviePage = () => {
     const { movieId } = useParams();
@@ -24,7 +25,7 @@ const MoviePage = () => {
         const fetchMovieDetails = async () => {
             try {
                 setIsLoading(true);
-                const response = await fetch(`http://localhost:3001/movie/${movieId}`);
+                const response = await fetch(`${AI_URL}/movie/${movieId}`);
                 if (!response.ok) {
                     throw new Error('Failed to fetch movie details');
                 }
@@ -39,14 +40,15 @@ const MoviePage = () => {
 
         const fetchAdditionalDetails = async () => {
             try {
-                const response = await fetch(`http://localhost:3001/movie_details/${movieId}`);
+                const response = await fetch(`${AI_URL}/movie_details/${movieId}`);
                 if (!response.ok) {
                     throw new Error('Failed to fetch additional movie details');
                 }
                 const detailsData = await response.json();
                 setMovieDetails(detailsData);
             } catch (err) {
-                setError(err.message);
+                // Optional section (needs a Gemini key); the rest of the page still renders
+                console.warn(err.message);
             }
         };
 
@@ -55,7 +57,10 @@ const MoviePage = () => {
     }, [movieId]);
 
     const handleSearch = async () => {
-        navigate(`/search?query=${searchQuery}`);
+        const query = searchQuery.trim();
+        if (!query) return;
+        if (user) recordSearch(query);
+        navigate(`/main?query=${encodeURIComponent(query)}`);
     };
 
     const handleInputChange = (event) => {
@@ -140,9 +145,9 @@ const MoviePage = () => {
                     <h2>Description</h2>
                     <p>{movieDetails.description}</p>
                     <h2>Directors</h2>
-                    <p>{movieDetails.directors.join(', ')}</p>
+                    <p>{(movieDetails.directors || []).join(', ')}</p>
                     <h2>Cast</h2>
-                    <p>{movieDetails.actors.join(', ')}</p>
+                    <p>{(movieDetails.actors || []).join(', ')}</p>
                 </div>
             )}
             {isPopupVisible && <AccountPopup onClose={togglePopup} />}
