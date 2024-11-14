@@ -1,13 +1,13 @@
 # MovieConx
 - MovieConx is a full-stack movie recommender built on the MERN stack (React client, Express + MongoDB server) and a Flask service that serves recommendations from sentence embeddings of the MovieLens 32M catalogue.
 - The main page recommends movies that match the genres the user picked, plus a "Based on your recent searches" row built from their last few searches.
-- Search embeds the query with `all-MiniLM-L6-v2` and ranks movies by cosine similarity against title embeddings (boosted by word overlap with the title) and combined title/genre/year embeddings.
+- Search embeds the query with `all-MiniLM-L6-v2` and looks it up in two FAISS indexes, one of title embeddings (matches boosted by word overlap with the title) and one of combined title/genre/year embeddings, ranking movies by cosine similarity.
 
 ## How recommendations work
 | Where | What it does |
 | --- | --- |
 | Genre picks | Each movie has a one-hot genre vector. Movies are ranked by cosine similarity to the user's chosen genres; ties keep popularity order. |
-| Recent searches | The user's last 5 searches are embedded and averaged; the movies closest to that average are shown. Search history is stored per user in MongoDB (last 20 queries). |
+| Recent searches | The user's last 5 searches are embedded and averaged; the nearest movies to that average in the FAISS index are shown. Search history is stored per user in MongoDB (last 20 queries). |
 | Movie page | Other movies with the most similar genres. |
 
 There is no collaborative filtering (no user-to-user similarity); recommendations come from the movie embeddings and each user's own genres and searches.
@@ -18,7 +18,7 @@ src/, public/    React client (Create React App)
 backend/         Express API: signup/login (bcrypt + JWT), preferences, settings, search history
 AI/              Flask recommender: search, genre recommendations, movie details
   movies.json          preprocessed MovieLens 32M catalogue
-  build_embeddings.py  generates AI/embeddings.npz from movies.json
+  build_embeddings.py  generates the FAISS indexes (title.faiss, combined.faiss) and embeddings.npz from movies.json
 merge_stats.csv  raw per-movie stats the catalogue was built from
 ```
 
@@ -28,7 +28,7 @@ Requires Node 18+, Python 3.10+ and a MongoDB database (Atlas or local).
 **1. Flask recommender (port 3001)**
 ```bash
 pip install -r AI/requirements.txt
-python AI/build_embeddings.py   # one-time, a few minutes on CPU; writes AI/embeddings.npz
+python AI/build_embeddings.py   # one-time, a few minutes on CPU; writes the FAISS indexes
 cp AI/.env.example AI/.env      # optional: add GEMINI_API_KEY for movie descriptions/cast
 python AI/app.py
 ```
@@ -90,7 +90,7 @@ Node.js provides a JavaScript runtime environment on the server side outside a w
 ### **Python Flask**
 Flask is a lightweight Python web framework.
 - **Role in this project**: Hosts the recommender.
-- Loads the movie catalogue and precomputed embeddings once at startup and serves search, genre-based and search-history-based recommendations.
+- Loads the movie catalogue and FAISS indexes once at startup and serves search, genre-based and search-history-based recommendations.
 - Gets details of a specific movie from `movies.json`, and optionally a description and cast from Gemini.
 
 ## Dataset Used

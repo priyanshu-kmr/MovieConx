@@ -6,12 +6,15 @@ from any working directory and on case-sensitive filesystems.
 import json
 import os
 
+import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MOVIES_PATH = os.path.join(BASE_DIR, 'movies.json')
 EMBEDDINGS_PATH = os.path.join(BASE_DIR, 'embeddings.npz')
+TITLE_INDEX_PATH = os.path.join(BASE_DIR, 'title.faiss')
+COMBINED_INDEX_PATH = os.path.join(BASE_DIR, 'combined.faiss')
 MODEL_NAME = 'sentence-transformers/all-MiniLM-L6-v2'
 
 genres_list = ['Action', 'Adventure', 'Animation', 'Children', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Fantasy', 'Film-Noir', 'Horror', 'Musical', 'Mystery', 'Romance', 'Sci-Fi', 'Thriller', 'War', 'Western']
@@ -41,7 +44,7 @@ def normalize(vectors):
 
 
 def encode_query(text):
-    return normalize(model.encode(text.lower()))
+    return normalize(model.encode(text.lower())).astype(np.float32)
 
 
 def cosine_similarity(vec1, vec2):
@@ -50,16 +53,26 @@ def cosine_similarity(vec1, vec2):
 
 MOVIES = load_movies()
 
-if not os.path.exists(EMBEDDINGS_PATH):
+_missing = [p for p in (EMBEDDINGS_PATH, TITLE_INDEX_PATH, COMBINED_INDEX_PATH) if not os.path.exists(p)]
+if _missing:
     raise SystemExit(
-        f"{EMBEDDINGS_PATH} not found. Build it once with: python AI/build_embeddings.py"
+        f"{', '.join(_missing)} not found. Build them once with: python AI/build_embeddings.py"
     )
 
 with np.load(EMBEDDINGS_PATH) as data:
     MOVIE_IDS = data['movie_ids'].tolist()
-    TITLE_VECTORS = data['title']        # unit length
-    COMBINED_VECTORS = data['combined']  # unit length
     GENRE_VECTORS = normalize(data['genres'].astype(np.float32))
+
+TITLE_INDEX = faiss.read_index(TITLE_INDEX_PATH)
+COMBINED_INDEX = faiss.read_index(COMBINED_INDEX_PATH)
+
+
+def _matches(index, query_embedding, threshold):
+    """(row, similarity) for every vector in the index above the threshold, by row order."""
+    lims, similarities, rows = index.range_search(query_embedding.reshape(1, -1), threshold)
+    rows, similarities = rows[lims[0]:lims[1]], similarities[lims[0]:lims[1]]
+    order = np.argsort(rows, kind='stable')  # deterministic tie order (popularity)
+    return zip(rows[order], similarities[order])
 
 
 def recommend_movies(input_genres):
@@ -83,16 +96,14 @@ def search_movies(query, similarity_threshold=0.5):
     query_words = set(query.lower().split())
     scores = {}
 
-    title_similarities = TITLE_VECTORS @ query_embedding
-    for i in np.flatnonzero(title_similarities >= similarity_threshold):
-        movie_id = MOVIE_IDS[i]
+    for row, similarity in _matches(TITLE_INDEX, query_embedding, similarity_threshold):
+        movie_id = MOVIE_IDS[row]
         title_words = set(MOVIES[movie_id]['title'].lower().split())
         word_overlap = len(query_words & title_words) / len(query_words) if query_words else 0
-        scores[movie_id] = title_similarities[i] * (1 + word_overlap)
+        scores[movie_id] = similarity * (1 + word_overlap)
 
-    combined_similarities = COMBINED_VECTORS @ query_embedding
-    for i in np.flatnonzero(combined_similarities >= similarity_threshold):
-        scores.setdefault(MOVIE_IDS[i], combined_similarities[i])
+    for row, similarity in _matches(COMBINED_INDEX, query_embedding, similarity_threshold):
+        scores.setdefault(MOVIE_IDS[row], similarity)
 
     return sorted(scores, key=scores.get, reverse=True)
 
@@ -100,7 +111,6 @@ def search_movies(query, similarity_threshold=0.5):
 def recommend_from_queries(queries, limit=14):
     """Movie ids closest to the average of several past search queries."""
     query_embeddings = np.stack([encode_query(q) for q in queries])
-    profile = normalize(query_embeddings.mean(axis=0))
-    similarities = COMBINED_VECTORS @ profile
-    top = np.argsort(-similarities)[:limit]
-    return [MOVIE_IDS[i] for i in top]
+    profile = normalize(query_embeddings.mean(axis=0)).astype(np.float32)
+    _, rows = COMBINED_INDEX.search(profile.reshape(1, -1), limit)
+    return [MOVIE_IDS[row] for row in rows[0] if row != -1]
