@@ -28,8 +28,8 @@ Flask is a light weight Python web framework.
 - handles the pre-computed embedding files for search which returns the top most similar movies based on the query provided by the user.
 - Uses collaborative filtering based on similar user's preferred genre.
 - Get details of a specific movie from the locally stored JSON file containing the data for each movie.
-## Database Used
-- The Database used in this project was provided by MovieLens 32M. The data was then preprocessed to a JSON file `movies.json`.
+## Dataset Used
+- The Dataset used in this project was provided by MovieLens 32M. The data was then preprocessed to a JSON file `movies.json`.
 
 
 
