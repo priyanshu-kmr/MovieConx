@@ -1,5 +1,5 @@
 # MovieConx 
-- MovieConx is a full-stack recommender system which utilizes the MERN stack for the client and server and a movie embeddings generated from the MovieLens 32M dataset for the recommender engine which is accessed via the FastAPI server.
+- MovieConx is a full-stack recommender system which utilizes the MERN stack for the client and server and a movie embeddings generated from the MovieLens 32M dataset for the recommender engine which is accessed via the Flask server.
 - This recommender helps the user get the most similar moves based on the past searches and the interested genres.
 The recommendation system uses embeddings to get the closed search of the movie. These embeddings are also used for collaborative filtering by checking the closed user with similar genres.
 - The recommender performs cosine similarity search on the query given by the user and return top 15 most similar movies similar movies in the descending order of similarity.
